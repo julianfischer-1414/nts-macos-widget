@@ -1,0 +1,447 @@
+# NTS Widget v1 Workflow
+
+## Widget Controls Moved Off App Intents (2026-08-31)
+
+### Problem observed
+
+- After the signing fix below, the widget rendered correctly but **no control did anything**: no audio, no
+  state change, no status-line update.
+
+### Diagnosis
+
+- The state file was never created, even though `RadioPlayerService.play` writes state as its very first
+  action — so `play()` had never run in the host.
+- A live `log stream` capture during a real tap showed the tap *did* reach the host:
+  `[com.apple.appintents:Connection] Received handleAppleEvent:withReplyEvent:`, immediately followed by
+  an XPC connection to `com.apple.linkd.mediator` failing with `XPC_ERROR_CONNECTION_INTERRUPTED` and
+  `Unable to get synchronousRemoteObjectProxy`. `perform()` was never called, in either process.
+- `linkd` itself was healthy (pid 696, and actively querying our app's `LSDisplayName`). The connection was
+  being refused, not broken.
+- Cause: performing an App Intent requires the app to have a code-signing identity. The identity comes from
+  `com.apple.application-identifier` / `com.apple.developer.team-identifier`, which are restricted
+  entitlements. Signing the host ad-hoc with just those two and no profile made AMFI **SIGKILL** it at
+  launch (exit 137) — verified directly. So the two requirements are mutually exclusive on a free team:
+  an identity that satisfies `linkd` needs a profile, and this team's profiles expire in 7 days.
+
+### Decisions
+
+### 1) Widget controls are URL links, not App Intents
+
+- Decision: `StationButton` and `PlayPauseButton` use `Link(destination:)` with `ntsradio://` URLs
+  (`ntsradio://play?station=nts1`, `ntsradio://toggle`), encoded/parsed by `WidgetAction` in `Shared/`.
+- Why: widget links open through LaunchServices, which needs no code identity, no entitlement and no
+  profile, so the mechanism cannot expire. It is the only interactive-widget path available to this signing
+  setup.
+- Trade-off: no in-place intent execution, so feedback depends on the host writing state and reloading the
+  timeline — which it already did. Verified latency is acceptable: Connecting appears immediately.
+
+### 2) Handle the URL in an NSApplicationDelegate, not `onOpenURL`
+
+- Decision: `WidgetActionURLHandler` is installed via `@NSApplicationDelegateAdaptor`.
+- Why: the host's only scene is `Settings`, which is never instantiated while the app runs headless, so a
+  scene-attached `onOpenURL` would never fire.
+
+### 3) Declare the scheme in an explicit host Info.plist
+
+- Decision: the host target switched from `GENERATE_INFOPLIST_FILE = YES` to
+  `INFOPLIST_FILE = NTSWidgetHost/Info.plist`, carrying over `LSUIElement`, display name and category.
+- Why: `CFBundleURLTypes` cannot be expressed as an `INFOPLIST_KEY_*` build setting.
+
+### 4) Keep the App Intent types, unused
+
+- Decision: `PlayStationIntent` / `TogglePlaybackIntent` and `HostRequiredPlaybackController` stay, with
+  `openAppWhenRun = true`, but nothing invokes them.
+- Why: they are correct and are the better mechanism if this project ever moves to a paid team. Deleting
+  them would discard working code for no gain. Documented as unused so nobody debugs them expecting taps
+  to arrive there.
+
+### Verification
+
+Driven through the real LaunchServices path with `open "ntsradio://…"`, which is exactly what a widget
+`Link` tap does:
+
+- `play?station=nts1` → `WidgetActionURLHandler] widget link play station=nts1` → `play requested` →
+  `AVPlayerEngine load/connecting/playing` → state file reaches `"statusText":"Playing NTS 1"`, and live
+  metadata was fetched ("GOD'S WAITING ROOM W/ DAVID HOLMES").
+- `toggle` → `Paused`. `play?station=nts2` → `item ready to play` / `state=playing` → `Playing NTS 2`.
+  `toggle` → `Paused`.
+- The extension's `getTimeline` was observed loading the host's new state from the shared file, confirming
+  both processes agree on the path.
+
+
+## Blank Widget / Expired Profile Fix (2026-08-31)
+
+### Problem observed
+
+- On macOS 26.6.2 the installed desktop widget rendered as an empty black rounded rectangle: background drawn, no content, no controls.
+- The host app could not start at all: `open -a "/Applications/NTS Radio.app"` failed with
+  `RBSRequestErrorDomain Code=5 "Launch failed"` / `NSPOSIXErrorDomain Code=163 "Launchd job spawn failed"`.
+
+### Root cause
+
+- The 1.0.1 release was **ad-hoc signed** (`Signature=adhoc`, `TeamIdentifier=not set`) but the packaging
+  script preserved the Xcode-built **team-scoped entitlements**: `com.apple.application-identifier`,
+  `com.apple.developer.team-identifier`, `keychain-access-groups`, `com.apple.security.application-groups`.
+- Those entitlements are only authorized by a provisioning profile. The embedded profile expired
+  **2026-08-04**, exactly **7 days** after the 2026-07-28 build — the project is signed by a *free* Apple
+  team, and free-team profiles last 7 days.
+- With an expired profile and restricted entitlements, AMFI refuses to spawn the process. Neither the host
+  nor the widget extension could run, so WidgetKit had nothing to render. The blank widget was a code
+  signing failure, not a SwiftUI or rendering-mode problem.
+- This affected every downloader of 1.0.1, roughly one week after release.
+
+### Decisions
+
+### 1) Ship no profile-dependent entitlements and no embedded profile
+
+- Decision: host entitlements are empty; `package-release.sh` deletes any `embedded.provisionprofile` and
+  re-signs ad-hoc with explicit empty/sandbox-only entitlement plists instead of reusing the built ones.
+- Why: an ad-hoc signature can never authorize team-scoped entitlements, and any profile this team can
+  issue expires in 7 days. Removing the dependency removes the whole class of failure.
+
+### 2) Keep the widget extension sandboxed; unsandbox only the host
+
+- Decision: the extension keeps `com.apple.security.app-sandbox` (and nothing else). The host has no
+  entitlements at all.
+- Why: macOS refuses to **register** an unsandboxed app extension — verified directly, removing the key
+  made `pluginkit -m -i com.fede.NTSWidgetHost.NTSWidgetExtension` report `(no matches)`, and restoring it
+  registered the extension again. Plain `app-sandbox` needs no profile, so it is expiry-safe. The host must
+  be unsandboxed so it can write into the extension's container.
+
+### 3) Move shared state into the widget extension's sandbox container
+
+- Decision: `SharedPlayerStateFileStore` replaces the keychain store, writing
+  `~/Library/Containers/com.fede.NTSWidgetHost.NTSWidgetExtension/Data/Library/Application Support/NTSWidgetHost/sharedPlayerState.json`
+  atomically. The host writes; the extension only reads.
+- Why: every sandbox-scoped sharing mechanism (app groups, team-prefixed keychain access groups,
+  `UserDefaults(suiteName:)`) needs a profile-dependent entitlement. A sandboxed extension can only reach
+  its own container and the unsandboxed host can reach anywhere, so that container is the one directory
+  both processes can agree on.
+- Note: the home directory is resolved from the passwd database, because `NSHomeDirectory()` and
+  `FileManager.urls(for:in:)` are container-redirected inside the extension and would yield a doubled
+  container path — the host and extension would silently use different files.
+- Status: supersedes the shared-keychain persistence decision below.
+
+### 4) Make the packaging script fail instead of shipping a broken build
+
+- Decision: `package-release.sh` now aborts if an embedded profile survives, if any of
+  `application-identifier` / `keychain-access-groups` / `application-groups` is present, or if the appex is
+  *not* sandboxed; and it runs a launch smoke test on the staged app before zipping.
+- Why: the 1.0.1 failure was silent at package time and only appeared for users a week later. Each gate
+  checks one of the specific things that actually broke.
+
+### 5) Fix the unit test action
+
+- Decision: added the missing `TestableReference` to `NTSWidgetHost.xcscheme` and set
+  `ENABLE_TESTABILITY = YES` on the project Debug config, so `xcodebuild ... test` runs the suite.
+- Why: the scheme's `<TestAction>` listed no testables, so `xcodebuild test` silently ran nothing. Five
+  `RadioPlayerService` tests had gone stale against the "write Connecting up-front" behavior and nobody
+  saw them fail. Tests updated to drive the mock engine through the real state sequence; 17/17 pass.
+
+### Operational notes
+
+- Replacing `/Applications/NTS Radio.app` **deregisters** the extension. Run
+  `lsregister -f -R "/Applications/NTS Radio.app"` and confirm with `pluginkit -m -i ...` or the widget
+  stays blank.
+- `log show` did not persist this app's `Logger` output on macOS 26.6.2 — it returned zero lines for a
+  process that was demonstrably running. Absence of log output is not evidence; use `log stream` or
+  `pgrep`.
+
+
+## Widget Stability Hardening (2026-04-28)
+
+### Problem observed
+
+- Adding or opening the widget could freeze/crash the macOS widget sidebar/Notification Center badly enough to require a system restart.
+- The widget extension was doing work that is unsafe in WidgetKit rendering paths: network metadata fetches, keychain writes, fallback AVPlayer playback, and repeated timeline reload amplification.
+
+### Current safety decisions
+
+### 1) Keep widget add previews static and timeline reloads read-only
+
+- Decision: `NTSWidgetProvider.getSnapshot` returns idle immediately for the widget gallery/add preview. `getTimeline` reads shared state only, then returns a timeline immediately. It does not fetch metadata, write shared state, start playback, or perform any network work.
+- Why: WidgetKit snapshot rendering must be fast for drag/add. Timeline reloads still need a read-only state mirror so the placed widget reflects playback.
+
+### 2) Forbid extension-owned playback fallback
+
+- Decision: The default `PlaybackControllerLocator` controller is `HostRequiredPlaybackController`, which logs and returns state without creating `AVPlayer` or mutating state. The host app still replaces it with `RadioPlayerService.shared` at launch.
+- Why: If App Intents ever execute in the extension instead of the host, the extension must fail inertly instead of trying to stream audio in a short-lived WidgetKit process.
+
+### 2b) Remove extension network entitlement
+
+- Decision: The widget extension does not request `com.apple.security.network.client`.
+- Why: The extension should not open streams or fetch metadata; only the host app owns network playback/metadata.
+
+### 3) Remove old external host sync
+
+- Decision: `NTSWidgetHostApp` no longer calls `startExternalStateSync`, and the dead distributed-notification sync path was removed.
+- Why: The sync path was from a superseded architecture, could race host-routed intents, and could pause or replay stale persisted state after a user action.
+
+### 4) Normalize stale playback state on host launch
+
+- Decision: If persisted state says `isPlaying = true` when the host starts, `RadioPlayerService` pauses the engine and persists a paused copy.
+- Why: Rebuilding or cold-launching the helper must never auto-start music from a stale keychain snapshot.
+
+## Stream Playback Regression Fix (2026-04-20)
+
+### Problem observed
+
+- Widget state transitions were visible, but no stream audio played.
+- Runtime inspection showed no persistent `NTSWidgetHost` process during widget interaction, so state-only intents had no playback owner to execute AVPlayer.
+
+### Root-cause decisions
+
+### 1) Restore direct playback execution in intents
+
+- Decision: `PlayStationIntent` and `TogglePlaybackIntent` now call `PlaybackControllerLocator.controller` directly again.
+- Why: Intent execution must trigger real playback in the same process path that handles the widget action; state-only writes are insufficient if host process is not alive.
+
+### 2) Keep widget-first interaction (no host window/app opening)
+
+- Decision: Set `openAppWhenRun = false` for both widget intents.
+- Why: This preserves widget-only controls and prevents user-visible host app launches while still executing playback.
+- Status: Superseded by 2026-04-28 host-routed intents; extension-side playback was unsafe for WidgetKit stability.
+
+### 3) Remove app-group defaults touchpoints in extension hot path
+
+- Decision: In app-group-container mode, `SharedPlayerStateStore` no longer initializes suite `UserDefaults` and relies on file-backed JSON + legacy plist migration.
+- Why: Avoid repeated `CFPrefs` sandbox read warnings in extension timeline/intent runtime and keep state transport deterministic.
+- Status: Superseded by shared keychain persistence.
+
+## Runtime Mismatch Triage (2026-04-19)
+
+### Problem observed on installed desktop widget
+
+- Installed widget did not visually match previews/spec:
+  - custom surface styling looked replaced by desktop-vibrant treatment
+  - station controls were not reliably visible in the bottom row
+- Pressing widget controls launched/opened the host app UI, which broke the “widget-first” interaction requirement.
+
+### Root-cause decisions
+
+### 1) Lock widget background rendering
+
+- Decision: Apply `.containerBackgroundRemovable(false)` on widget configuration.
+- Why: Prevent the host system from stripping/replacing the custom container background in desktop contexts.
+
+### 2) Neutralize runtime content-margin drift
+
+- Decision: Apply `.contentMarginsDisabled()` on widget configuration.
+- Why: Keep layout geometry consistent with handoff spacing rather than auto margin adjustments.
+
+### 3) Prevent control collapse with deterministic row sizing
+
+- Decision: Replace the flexible control `HStack` with a weighted `GeometryReader` row (`1 : 1 : 1.25` for station1/station2/play).
+- Why: Eliminate runtime compression where primary action expands and station buttons collapse.
+
+### 3b) Raise dark-mode control contrast for installed widgets
+
+- Decision: Increase inactive station background/stroke contrast in dark mode (lighter fill + light stroke).
+- Why: Desktop vibrant rendering can wash out subtle dark-on-dark strokes, making station controls appear missing.
+
+### 4) Keep playback host process but remove host UI surface
+
+- Decision: Convert app scene to headless settings-only scene and set activation policy to `.accessory`.
+- Why: Widget actions can still run playback logic without opening a visible host window, preserving widget as the sole user-facing control surface.
+
+### 5) Force runtime reload after extension changes
+
+- Decision: Restart `NTSWidgetExtension`, `NTSWidgetHost`, and `NotificationCenter` when installed UI appears unchanged after rebuild.
+- Why: Widget processes can keep stale snapshots/code paths alive across rebuilds; process restart forces fresh extension load.
+
+### 6) Make playback ownership explicit in widget intent runtime
+
+- Decision: Set `PlaybackControllerLocator` default to a concrete AVPlayer-backed controller available in both app and widget extension code paths.
+- Why: Widget taps execute in extension runtime and must not depend on host-app-only initialization to control playback.
+- Status: Superseded by 2026-04-28 `HostRequiredPlaybackController`, which deliberately does not create `AVPlayer` outside the host process.
+
+### 7) Remove `AudioPlaybackIntent` conformance from widget controls
+
+- Decision: Keep intents as plain `AppIntent` for deterministic widget action execution.
+- Why: This avoids media-intent routing behavior that can obscure station/play state transitions from direct widget interactions.
+
+### 8) Give extension explicit network capability
+
+- Decision: Add `com.apple.security.network.client` to extension entitlements.
+- Why: Stream playback can be initiated by extension-owned intent handling and must be allowed to open network streams.
+- Status: Superseded for playback; the extension should not initiate streams.
+
+### 9) Restore explicit App Group entitlement on both targets
+
+- Decision: Add `com.apple.security.application-groups = group.com.fede.NTSWidgetHost` to both host-app and widget-extension entitlements.
+- Why: Widget intents and timeline updates can execute in different processes; without a shared app-group store, state writes/read diverge and UI remains stuck at idle.
+
+### 10) Replace group `UserDefaults` as primary state transport with file-backed app-group storage
+
+- Decision: Persist `SharedPlayerState` to a JSON file under `App Group container/Library/Application Support/sharedPlayerState.json` and use `UserDefaults` only as fallback.
+- Why: Widget runtime logs showed cfprefsd sandbox read failures for the group defaults domain in extension context; direct file I/O in the resolved app-group container is reliable across timeline + intent processes.
+- Status: Superseded by shared keychain persistence.
+
+### 11) Add legacy-state migration path
+
+- Decision: When the JSON state file is missing, load and decode legacy state from `App Group container/Library/Preferences/group.com.fede.NTSWidgetHost.plist`, then seed the new JSON file.
+- Why: Existing installs may already have valid state in old preferences storage and should not regress to idle on first launch after store migration.
+
+### 12) Move actual stream playback ownership back to host app process
+
+- Decision: Widget intents wrote desired playback state and broadcast a distributed signal; host app observed that signal and executed AVPlayer actions.
+- Why: Widget extension runtime is transient and not a durable place for continuous audio streaming; host process is stable while the widget remains the sole user-facing control surface.
+- Status: Superseded by 2026-04-20 direct intent playback after host process liveness regression in production usage.
+
+### 13) Launch host process on widget actions without exposing UI
+
+- Decision: Set widget intents `openAppWhenRun = true` while keeping host app headless (`.accessory` + no content window scene).
+- Why: Ensures the playback engine process starts reliably on tap but does not surface an app window.
+- Status: Active again as of 2026-04-28, with extension-side playback fallback removed for stability.
+
+## Handoff Visual Integration (2026-04-18)
+
+### Goal
+
+- Adopt the visual language from `/Users/federico.cattaneo/Downloads/handoff/HANDOFF.md` for the existing widget implementation without changing playback architecture.
+
+### Decisions
+
+### 1) Keep runtime architecture, replace presentation only
+
+- Decision: Rework `NTSWidgetExtension/NTSWidget.swift` to match the handoff aesthetics while preserving existing `SharedPlayerState` + App Intent flow.
+- Why: User request is specifically visual; changing the state contract or target structure would create unnecessary risk.
+
+### 2) Implement handoff design tokens directly in SwiftUI
+
+- Decision: Add handoff-matched layout spacing, typography, background gradients, button styles, badge styles, and symbol sizing directly in the widget view/components.
+- Why: This gives deterministic parity with the supplied reference states while staying native to WidgetKit.
+
+### 3) Add explicit visual-state adapter
+
+- Decision: Introduce a widget-local state adapter (`idle`, `playing`, `paused`, `unavailable`) derived from `SharedPlayerState`.
+- Mapping rules:
+  - `lastError` present or `statusText == "Unavailable"` -> `unavailable`
+  - `isPlaying == true` -> `playing`
+  - `currentStation != nil && isPlaying == false` -> `paused`
+  - otherwise -> `idle`
+- Why: Existing shared state is richer than the handoff’s visual model; adapter ensures fixed labels/badges from the design spec.
+
+### 4) Keep file-level implementation local to avoid project churn
+
+- Decision: Keep the new visual components (`TopRow`, `StatusLine`, `StationButton`, `PlayPauseButton`, `WaveformIcon`) in `NTSWidget.swift` for now.
+- Why: Avoids manual `.xcodeproj` edits and keeps scope focused on safe aesthetic integration.
+
+### 5) Expand previews to all required states
+
+- Decision: Ensure previews include `Idle`, `NTS 1 Playing`, `NTS 2 Playing`, `Paused`, and `Unavailable`.
+- Why: The handoff defines these five as the visual acceptance set.
+
+## Scope Lock (v1)
+
+- Build a native macOS SwiftUI host app and a WidgetKit extension.
+- Keep one widget family only: `systemMedium`.
+- Support live playback only for `NTS 1` and `NTS 2`.
+- Exclude show metadata, artwork, search, and menu bar UI.
+- Keep one fallback host window with the same 3 controls as the widget.
+
+## Architecture Decisions
+
+### 1) Native host app + widget extension
+
+- Decision: Use a standard app target (`NTSWidgetHost`) plus a WidgetKit extension target (`NTSWidgetExtension`) under `macOS 14+`.
+- Why: macOS widgets are delivered by an app and extension pairing, and v1 can use the App Intents path without backward branches.
+
+### 2) Shared, app-group-backed playback state
+
+- Decision: Persist one shared model (`SharedPlayerState`) into an app group store.
+- State shape: `currentStation`, `isPlaying`, `statusText`, `lastError`, `updatedAt`.
+- Why: Widget and app need synchronized, glanceable state with a minimal data contract.
+
+### 3) Playback ownership in app process
+
+- Decision: Keep audio control in `RadioPlayerService` (app target), and have intents route through a shared playback controller locator.
+- Why: Widget code should not own AV playback; intents trigger app-owned behavior and then refresh widget timelines.
+
+### 4) Direct stream URLs only
+
+- Decision: Map stations to fixed official live stream URLs:
+  - `NTS 1`: `https://stream-relay-geo.ntslive.net/stream`
+  - `NTS 2`: `https://stream-relay-geo.ntslive.net/stream2`
+- Why: v1 avoids scraping/discovery layers.
+
+### 5) Widget UX constraints
+
+- Decision: Medium utility layout with:
+  - top: `NTS` + active station badge
+  - middle: one status line
+  - bottom: `1`, `2`, and `Play/Pause`
+- Why: Keep interactions focused and glanceable.
+
+## Testing Decisions
+
+- Unit test `Station` mapping and stream URL selection.
+- Unit test `RadioPlayerService` transitions and failure behavior with engine doubles.
+- Unit test intents for station selection and toggle behavior preserving station context.
+- Add four widget previews: idle, NTS 1 playing, NTS 2 playing, error.
+
+## Environment Notes
+
+- Command Line Tools are present; full Xcode selection is still required for local build/run of app + widget targets.
+
+## Host Visibility (macOS)
+
+- The host app is built as an agent (`LSUIElement = YES`) and sets its activation policy to `.accessory`, so it should not appear in the Dock or app switcher while remaining eligible to handle WidgetKit App Intents. Expect the `NTSWidgetHost` process to exist in Activity Monitor because macOS requires a containing app for WidgetKit.
+
+## Design Prompt Decisions
+
+### 1) Interpret "cloud design" cautiously
+
+- Decision: Do not treat "cloud design" as a formal widget UI methodology for this project.
+- Why: In broader software usage, "cloud design" usually refers to cloud architecture patterns, not desktop widget styling.
+
+### 2) Keep the widget Apple-native first
+
+- Decision: Base the design prompt on macOS WidgetKit behavior and Apple-native utility styling, not on the NTS website look.
+- Why: The product brief explicitly optimizes for a real Mac widget that must remain glanceable on the desktop and in Notification Center.
+
+### 3) Use an airy, lightweight visual tone only as a secondary cue
+
+- Decision: If a designer wants a "cloud-like" feeling, express it through softness, calm spacing, rounded geometry, and subtle layered depth rather than literal cloud graphics.
+- Why: Literal illustration would fight the v1 scope lock, rendering modes, and legibility requirements.
+
+### 4) Preserve v1 interaction limits in the design brief
+
+- Decision: The design prompt must lock to one `systemMedium` widget, one status line, and exactly three controls.
+- Why: Extra controls, metadata, or artwork would push the design away from the agreed v1 scope and the current implementation shape.
+
+### 5) Ask for state-based design output
+
+- Decision: Require designs for idle, NTS 1 playing, NTS 2 playing, paused, and error/unavailable states.
+- Why: The widget is state-driven, and the prompt should produce a usable spec rather than a single polished marketing frame.
+
+## Implementation Checkpoints
+
+### Completed scaffold
+
+- Created `macos-nts-widget/NTSWidgetHost.xcodeproj` with three targets:
+  - `NTSWidgetHost` (macOS app)
+  - `NTSWidgetExtension` (WidgetKit extension)
+  - `NTSWidgetHostTests` (unit tests)
+- Added shared models and intents under `macos-nts-widget/Shared`.
+- Added app playback service (`AVPlayer` wrapper + `RadioPlayerService`) under `macos-nts-widget/NTSWidgetHost`.
+- Added one medium widget and timeline/provider state rendering under `macos-nts-widget/NTSWidgetExtension`.
+- Added unit tests for station mapping, player transitions, and intent behavior.
+- Added a manual validation checklist at `macos-nts-widget/MANUAL_TEST_PLAN.md`.
+- Aligned identifiers to:
+  - app bundle id: `com.fede.NTSWidgetHost`
+  - extension bundle id: `com.fede.NTSWidgetHost.NTSWidgetExtension`
+  - app group id: `group.com.fede.NTSWidgetHost`
+
+### Verification status
+
+- `project.pbxproj` passes plist linting.
+- `xcodebuild` cannot run in current shell because the active developer directory points to Command Line Tools instead of full Xcode.
+- Swift type-check with CLT toolchain is blocked by local toolchain/SDK mismatch in this environment, so compile/test confirmation is pending full Xcode selection.
+- Added explicit widget extension `Info.plist` metadata and then reverted the `NSExtensionPrincipalClass` override to stay aligned with default WidgetKit extension loading behavior.
+- Updated extension run scheme (`NTSWidgetExtension.xcscheme`) to set `_XCWidgetKind=NTSWidget` so debug launching the extension consistently targets the real widget kind.
+- Removed `NSExtensionPrincipalClass` override from widget `Info.plist` to keep WidgetKit extension loading on the template-default path.
+- Local-dev registration fix: removed `com.apple.security.application-groups` from host/extension entitlements because current provisioning profile does not advertise app groups, which can block extension registration in widget gallery.
+- Added back `com.apple.security.app-sandbox` to the widget extension entitlement set (without app group) to preserve valid macOS extension sandboxing while keeping local registration compatible with current profile.
+- Set widget intents `openAppWhenRun = false` to avoid forcing foreground app openings on widget control taps. Superseded by 2026-04-28 host-routed intents plus hidden `LSUIElement`/`.accessory` host behavior.
+- Renamed widget gallery label to `NTS Live (Host)` to reduce confusion with similarly named existing NTS widgets.
