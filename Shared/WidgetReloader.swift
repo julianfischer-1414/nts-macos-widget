@@ -13,10 +13,12 @@ struct WidgetReloader: WidgetReloading {
 
     func reloadTimelines() {
         #if canImport(WidgetKit)
-        logger.log("reloadTimelines requested kind=\(AppConstants.widgetKind, privacy: .public)")
-        // Fire only one reload. `reloadAllTimelines()` on top causes chronod
-        // to dedupe and schedule provider runs LATER, not sooner.
-        WidgetCenter.shared.reloadTimelines(ofKind: AppConstants.widgetKind)
+        // Exactly one reload per widget kind. `reloadAllTimelines()` on top
+        // causes chronod to dedupe and schedule provider runs LATER, not sooner.
+        for kind in AppConstants.allWidgetKinds {
+            logger.log("reloadTimelines requested kind=\(kind, privacy: .public)")
+            WidgetCenter.shared.reloadTimelines(ofKind: kind)
+        }
         #endif
     }
 }

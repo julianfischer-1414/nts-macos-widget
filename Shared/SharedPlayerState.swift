@@ -47,6 +47,9 @@ struct SharedPlayerState: Codable, Equatable, Sendable {
             return nts1NowTitle
         case .nts2:
             return nts2NowTitle
+        default:
+            // Mixtapes have no per-show title; their name is the title.
+            return nil
         }
     }
 }

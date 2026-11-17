@@ -88,17 +88,24 @@ struct NTSWidgetEntryView: View {
 
     private var content: some View {
         VStack(spacing: 0) {
-            Header(status: status)
+            Header(title: "NTS RADIO", status: status)
                 .padding(.horizontal, 14)
-                .frame(height: 38)
+                .frame(height: 34)
 
             Rule()
-            ChannelRow(station: .nts1, status: status)
+            ChannelRow(station: .nts1, status: status, height: 40)
             Rule()
-            ChannelRow(station: .nts2, status: status)
+            ChannelRow(station: .nts2, status: status, height: 40)
             Rule()
 
-            Spacer(minLength: 0)
+            // Two favourite Infinite Mixtapes share the bottom row; the large
+            // Mixtapes widget has all of them.
+            HStack(spacing: 0) {
+                ChannelRow(station: .poolside, status: status, compact: true)
+                VerticalRule()
+                ChannelRow(station: .slowFocus, status: status, compact: true)
+            }
+            .frame(maxHeight: .infinity)
         }
     }
 
@@ -115,7 +122,16 @@ private struct Rule: View {
     }
 }
 
+private struct VerticalRule: View {
+    var body: some View {
+        Rectangle()
+            .fill(NTS.rule)
+            .frame(width: 1)
+    }
+}
+
 private struct Header: View {
+    let title: String
     let status: WidgetStatus
 
     var body: some View {
@@ -123,7 +139,7 @@ private struct Header: View {
             // Opens nts.live (e.g. to check what track is playing).
             Link(destination: WidgetAction.openWebsite.url) {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text("NTS RADIO")
+                    Text(title)
                         .font(NTS.font(17))
                     Image(systemName: "arrow.up.right")
                         .font(.system(size: 10, weight: .black))
@@ -159,9 +175,14 @@ private struct LiveDot: View {
 
 /// One line of the nts.live live bar: `● [1] ▶  SHOW TITLE`.
 /// Tapping the active channel toggles play/pause; tapping the other switches.
+///
+/// `height: nil` fills the available height. `compact` tightens spacing and
+/// type for half-width cells (mixtape row, Mixtapes widget grid).
 private struct ChannelRow: View {
     let station: Station
     let status: WidgetStatus
+    var height: CGFloat? = nil
+    var compact = false
 
     var body: some View {
         Link(destination: action.url) {
@@ -172,30 +193,30 @@ private struct ChannelRow: View {
                         LiveDot()
                     }
                 }
-                .frame(width: 14)
+                .frame(width: compact ? 12 : 14)
 
                 Text(station.badgeLabel)
-                    .font(NTS.font(16))
+                    .font(NTS.font(compact ? 15 : 16))
                     .foregroundStyle(isActive ? NTS.background : NTS.foreground)
-                    .frame(width: 20, height: 20)
+                    .frame(width: compact ? 18 : 20, height: compact ? 18 : 20)
                     .background(isActive ? NTS.foreground : .clear)
                     .overlay(Rectangle().strokeBorder(NTS.foreground, lineWidth: isActive ? 0 : 1.5))
 
                 Image(systemName: controlSymbol)
-                    .font(.system(size: 12, weight: .black))
+                    .font(.system(size: compact ? 10 : 12, weight: .black))
                     .foregroundStyle(NTS.foreground)
-                    .frame(width: 30)
+                    .frame(width: compact ? 22 : 30)
 
                 Text(title)
-                    .font(NTS.font(16))
+                    .font(NTS.font(compact ? 14 : 16))
                     .foregroundStyle(isActive ? NTS.foreground : NTS.dim)
                     .lineLimit(1)
                     .truncationMode(.tail)
 
                 Spacer(minLength: 0)
             }
-            .padding(.trailing, 12)
-            .frame(maxWidth: .infinity, minHeight: 44, maxHeight: 44)
+            .padding(.trailing, compact ? 6 : 12)
+            .frame(maxWidth: .infinity, minHeight: height, maxHeight: height ?? .infinity)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -226,13 +247,13 @@ private struct ChannelRow: View {
     }
 
     private var title: String {
-        let raw = status.title(for: station) ?? "Live on \(station.badgeLabel)"
-        return raw.uppercased()
+        let fallback = station.isLive ? "Live on \(station.badgeLabel)" : station.displayName
+        return (status.title(for: station) ?? fallback).uppercased()
     }
 
     private var accessibilityText: String {
         let verb = isRunning ? "Pause" : "Play"
-        return "\(verb) \(station.displayName): \(status.title(for: station) ?? "")"
+        return "\(verb) \(station.displayName)\(status.title(for: station).map { ": \($0)" } ?? "")"
     }
 }
 
@@ -297,14 +318,73 @@ private struct WidgetStatus {
         case .idle:
             return "LIVE NOW"
         case .connecting:
-            return "LOADING \(station.badgeLabel)"
+            return "LOADING \(station.headerName)"
         case .playing:
-            return "LIVE ON \(station.badgeLabel)"
+            return station.isLive ? "LIVE ON \(station.headerName)" : "∞ \(station.headerName)"
         case .paused:
             return "PAUSED"
         case .unavailable:
             return "OFFLINE"
         }
+    }
+}
+
+// MARK: - Mixtapes widget (systemLarge)
+
+/// All Infinite Mixtapes in a two-column grid. Same provider and shared state
+/// as the live widget, so tapping a cell plays it through the host just like
+/// the live rows.
+struct NTSMixtapesEntryView: View {
+    let entry: NTSWidgetEntry
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Header(title: "NTS MIXTAPES", status: status)
+                .padding(.horizontal, 14)
+                .frame(height: 38)
+
+            Rule()
+
+            HStack(spacing: 0) {
+                column(Array(Station.mixtapes.prefix(columnLength)))
+                VerticalRule()
+                column(Array(Station.mixtapes.dropFirst(columnLength)))
+            }
+            .frame(maxHeight: .infinity)
+        }
+        .containerBackground(for: .widget) { NTS.background }
+    }
+
+    private var columnLength: Int {
+        (Station.mixtapes.count + 1) / 2
+    }
+
+    private func column(_ stations: [Station]) -> some View {
+        VStack(spacing: 0) {
+            ForEach(Array(stations.enumerated()), id: \.element) { index, station in
+                if index > 0 {
+                    Rule()
+                }
+                ChannelRow(station: station, status: status, compact: true)
+            }
+        }
+    }
+
+    private var status: WidgetStatus {
+        WidgetStatus(state: entry.state)
+    }
+}
+
+struct NTSMixtapesWidget: Widget {
+    var body: some WidgetConfiguration {
+        StaticConfiguration(kind: AppConstants.mixtapesWidgetKind, provider: NTSWidgetProvider()) { entry in
+            NTSMixtapesEntryView(entry: entry)
+        }
+        .configurationDisplayName("NTS Infinite Mixtapes")
+        .description("Play any of NTS's Infinite Mixtapes.")
+        .containerBackgroundRemovable(false)
+        .contentMarginsDisabled()
+        .supportedFamilies([.systemLarge])
     }
 }
 
@@ -314,7 +394,7 @@ struct NTSWidget: Widget {
             NTSWidgetEntryView(entry: entry)
         }
         .configurationDisplayName("NTS Live (Host)")
-        .description("Play NTS 1 and NTS 2 live streams.")
+        .description("Play NTS 1, NTS 2 and two Infinite Mixtapes.")
         .containerBackgroundRemovable(false)
         .contentMarginsDisabled()
         .supportedFamilies([.systemMedium])
@@ -393,6 +473,36 @@ struct NTSWidget: Widget {
             isPlaying: false,
             statusText: "Unavailable",
             lastError: "Network unavailable",
+            updatedAt: .now
+        )
+    )
+}
+
+#Preview("Mixtape Playing", as: .systemMedium) {
+    NTSWidget()
+} timeline: {
+    NTSWidgetEntry(
+        date: .now,
+        state: SharedPlayerState(
+            currentStation: .poolside,
+            isPlaying: true,
+            statusText: "Playing Poolside",
+            lastError: nil,
+            updatedAt: .now
+        )
+    )
+}
+
+#Preview("Mixtapes", as: .systemLarge) {
+    NTSMixtapesWidget()
+} timeline: {
+    NTSWidgetEntry(
+        date: .now,
+        state: SharedPlayerState(
+            currentStation: .islandTime,
+            isPlaying: true,
+            statusText: "Playing Island Time",
+            lastError: nil,
             updatedAt: .now
         )
     )

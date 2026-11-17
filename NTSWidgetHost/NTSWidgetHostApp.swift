@@ -240,7 +240,8 @@ private final class HostMediaControls {
     }
 
     private func cycledStation(from current: Station?, direction: Int) -> Station {
-        let stations: [Station] = [.nts1, .nts2]
+        // Next/previous stays within the current group: live channels, or mixtapes.
+        let stations = (current?.isLive ?? true) ? Station.liveStations : Station.mixtapes
         let currentIndex = stations.firstIndex(of: current ?? .nts1) ?? 0
         let shiftedIndex = (currentIndex + direction + stations.count) % stations.count
         return stations[shiftedIndex]
@@ -251,7 +252,9 @@ private final class HostMediaControls {
 
         var nowPlayingInfo: [String: Any] = [
             MPMediaItemPropertyArtist: "NTS Radio",
-            MPMediaItemPropertyTitle: currentTitle.isEmpty ? "Live Radio" : currentTitle
+            MPMediaItemPropertyTitle: currentTitle.isEmpty
+                ? (state.currentStation.map { $0.isLive ? "Live Radio" : "\($0.displayName) · Infinite Mixtape" } ?? "Live Radio")
+                : currentTitle
         ]
 
         if let station = state.currentStation {

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A native macOS app (`NTSWidgetHost`) plus WidgetKit extension (`NTSWidgetExtension`) that plays the NTS 1 / NTS 2 live streams from a `systemMedium` desktop widget. macOS 14+. Unofficial fan project.
 
-**Scope is deliberately locked (v1):** one widget family (`systemMedium`), two stations, three controls (`1`, `2`, `Play/Pause`), one status line. No artwork, no search, no menu bar UI, no extra widget sizes. The header (`NTS RADIO ↗`) opens nts.live, added on request so users can check track IDs on the site. It is `WidgetAction.openWebsite` (`ntsradio://website`), opened by the host via `NSWorkspace` — macOS delivers every widget `Link`, https included, to the containing app, so a plain https `Link` silently does nothing. Don't expand this without being asked.
+**Scope is deliberately locked:** a `systemMedium` widget (NTS 1, NTS 2, plus a bottom row with the Poolside and Slow Focus Infinite Mixtapes) and a `systemLarge` Mixtapes widget listing all 16 Infinite Mixtapes (added on request 2026-11-17). Both share one provider and the shared state; every playable source is a `Station` case, mixtapes have `isLive == false` and a hard-coded stream URL from `nts.live/api/v2/mixtapes`. No artwork, no search, no menu bar UI, no extra widget sizes. The header (`NTS RADIO ↗`) opens nts.live, added on request so users can check track IDs on the site. It is `WidgetAction.openWebsite` (`ntsradio://website`), opened by the host via `NSWorkspace` — macOS delivers every widget `Link`, https included, to the containing app, so a plain https `Link` silently does nothing. Don't expand this without being asked.
 
 ## Commands
 
@@ -43,6 +43,8 @@ pluginkit -m -i com.fede.NTSWidgetHost.NTSWidgetExtension -vvv   # must print th
 killall NTSWidgetExtension NTSWidgetHost NotificationCenter chronod
 open -a "/Applications/NTS Radio.app"   # must succeed; a spawn failure means an entitlement problem
 ```
+
+**Bump `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` whenever the set of widgets or their names/descriptions changes.** chronod caches the widget descriptors per bundle version, so a reinstall with the same version keeps showing the old gallery (a newly added widget simply does not appear).
 
 Two diagnostics worth knowing, both learned the hard way:
 
@@ -120,6 +122,8 @@ The status line's symbol is aligned with `VerticalAlignment.firstLineCenter` (in
 
 - App bundle id `com.fede.NTSWidgetHost`; extension `com.fede.NTSWidgetHost.NTSWidgetExtension`
 - Widget kind `NTSWidget` (`AppConstants.widgetKind`); the extension scheme sets `_XCWidgetKind=NTSWidget`
+- Mixtapes widget kind `NTSMixtapesWidget` (`AppConstants.mixtapesWidgetKind`); `WidgetReloader` reloads every kind in `AppConstants.allWidgetKinds`, one call per kind
+- `Station` raw values are persisted in the shared state file (`nts1`, `mixtape-poolside`, …) — don't rename them
 - URL scheme `ntsradio` (`AppConstants.urlScheme`), declared in `NTSWidgetHost/Info.plist` under `CFBundleURLTypes`; the host target uses that explicit plist (not `GENERATE_INFOPLIST_FILE`) because `CFBundleURLTypes` cannot be expressed as an `INFOPLIST_KEY_*` setting
 - The extension bundle id also names the sandbox container the shared state file lives in, so `AppConstants.widgetExtensionBundleIdentifier` must match the extension target's `PRODUCT_BUNDLE_IDENTIFIER`
 - No team id is set anywhere; builds are ad-hoc signed on purpose (see signing invariants)

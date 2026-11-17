@@ -5,7 +5,7 @@ cd "$(dirname "$0")"
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 
 echo "== Baue NTS Radio …"
-./scripts/package-release.sh 1.0.3-nts-design
+./scripts/package-release.sh 1.0.3
 
 echo "== Installiere nach /Applications …"
 pkill -f "NTS Radio.app" || true

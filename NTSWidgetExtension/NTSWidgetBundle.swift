@@ -5,5 +5,6 @@ import WidgetKit
 struct NTSWidgetBundle: WidgetBundle {
     var body: some Widget {
         NTSWidget()
+        NTSMixtapesWidget()
     }
 }

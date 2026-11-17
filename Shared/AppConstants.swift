@@ -8,6 +8,9 @@ enum AppConstants {
     /// why the controls are links rather than App Intents.
     static let urlScheme = "ntsradio"
     static let widgetKind = "NTSWidget"
+    /// The large widget listing all Infinite Mixtapes.
+    static let mixtapesWidgetKind = "NTSMixtapesWidget"
+    static let allWidgetKinds = [widgetKind, mixtapesWidgetKind]
     static let ntsLiveAPIURL = URL(string: "https://www.nts.live/api/v2/live")!
     /// Opened by the host when the widget's header is tapped, so the user can
     /// check track IDs on the site (see `WidgetAction.openWebsite`).
