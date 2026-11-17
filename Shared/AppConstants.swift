@@ -9,6 +9,9 @@ enum AppConstants {
     static let urlScheme = "ntsradio"
     static let widgetKind = "NTSWidget"
     static let ntsLiveAPIURL = URL(string: "https://www.nts.live/api/v2/live")!
+    /// Opened by the widget's header so the user can check track IDs on the
+    /// site. A plain https `Link`; the system opens it in the default browser.
+    static let ntsWebsiteURL = URL(string: "https://www.nts.live")!
 
     /// The widget extension's bundle identifier, which also names its sandbox
     /// container — the directory the host and the extension share state through.

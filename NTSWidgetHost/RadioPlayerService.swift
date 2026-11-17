@@ -16,18 +16,22 @@ final class RadioPlayerService: ObservableObject, PlaybackControlling {
     private let widgetReloader: WidgetReloading
     private let metadataService: NTSLiveMetadataFetching
     private var pendingStation: Station?
+    private let metadataRefreshInterval: Duration
+    private var metadataRefreshTask: Task<Void, Never>?
 
     init(
         engine: RadioPlaybackEngine = AVPlayerEngine(),
         stateStore: SharedPlayerStateStoring = SharedPlayerStateFileStore(),
         widgetReloader: WidgetReloading = WidgetReloader(),
         metadataService: NTSLiveMetadataFetching = NTSLiveMetadataService(),
+        metadataRefreshInterval: Duration = .seconds(120),
         initialState: SharedPlayerState? = nil
     ) {
         self.engine = engine
         self.stateStore = stateStore
         self.widgetReloader = widgetReloader
         self.metadataService = metadataService
+        self.metadataRefreshInterval = metadataRefreshInterval
         self.state = RadioPlayerService.launchState(
             initialState: initialState,
             stateStore: stateStore,
@@ -99,6 +103,7 @@ final class RadioPlayerService: ObservableObject, PlaybackControlling {
 
         if state.isPlaying {
             engine.pause()
+            stopMetadataRefresh()
 
             applyWithMetadata(
                 currentStation: state.currentStation,
@@ -139,8 +144,9 @@ final class RadioPlayerService: ObservableObject, PlaybackControlling {
                 statusText: station.map { "Playing \($0.displayName)" } ?? "Playing",
                 lastError: nil
             )
-            fetchAndPersistMetadata()
+            startMetadataRefresh()
         case .paused:
+            stopMetadataRefresh()
             if !state.isPlaying, (state.lastError ?? "").isEmpty == false {
                 return
             }
@@ -152,6 +158,7 @@ final class RadioPlayerService: ObservableObject, PlaybackControlling {
                 lastError: nil
             )
         case .failed(let message):
+            stopMetadataRefresh()
             applyWithMetadata(
                 currentStation: state.currentStation,
                 isPlaying: false,
@@ -162,6 +169,7 @@ final class RadioPlayerService: ObservableObject, PlaybackControlling {
     }
 
     private func transitionToError(_ error: Error) -> SharedPlayerState {
+        stopMetadataRefresh()
         logger.error("transitionToError message=\(error.localizedDescription, privacy: .public)")
 
         applyWithMetadata(
@@ -219,21 +227,44 @@ final class RadioPlayerService: ObservableObject, PlaybackControlling {
         apply(newState)
     }
 
-    private func fetchAndPersistMetadata() {
-        Task { [weak self] in
-            guard let self else {
-                return
-            }
-
-            do {
-                let nowPlaying = try await metadataService.fetchNowPlaying()
-                await MainActor.run {
-                    self.mergeMetadata(nowPlaying)
+    /// Keeps the show titles current for as long as audio is playing.
+    ///
+    /// A single fetch at playback start is not enough: NTS changes shows on
+    /// the hour, so a stream left running would keep showing the show it
+    /// started on. `mergeMetadata` only persists (and reloads the widget) when
+    /// a title actually changed, so polling does not burn chronod's reload
+    /// budget. Runs only in the host, never in the widget extension.
+    private func startMetadataRefresh() {
+        metadataRefreshTask?.cancel()
+        let service = metadataService
+        let interval = metadataRefreshInterval
+        // A failed fetch (typically the first one, racing stream start-up)
+        // is retried soon rather than leaving a stale title for a full interval.
+        let retryInterval = min(interval, .seconds(15))
+        metadataRefreshTask = Task { [weak self] in
+            while !Task.isCancelled, self != nil {
+                var delay = interval
+                do {
+                    let nowPlaying = try await service.fetchNowPlaying()
+                    guard !Task.isCancelled else { return }
+                    self?.mergeMetadata(nowPlaying)
+                } catch {
+                    delay = retryInterval
+                    self?.logger.error("metadata fetch failed error=\(error.localizedDescription, privacy: .public)")
                 }
-            } catch {
-                logger.debug("metadata fetch skipped error=\(error.localizedDescription, privacy: .public)")
+
+                do {
+                    try await Task.sleep(for: delay)
+                } catch {
+                    return
+                }
             }
         }
+    }
+
+    private func stopMetadataRefresh() {
+        metadataRefreshTask?.cancel()
+        metadataRefreshTask = nil
     }
 
     @MainActor

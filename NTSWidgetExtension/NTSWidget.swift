@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import WidgetKit
 import os
@@ -44,12 +45,29 @@ struct NTSWidgetProvider: TimelineProvider {
 // corners. Univers Condensed is not a system font, so Helvetica Neue Condensed
 // Bold (bundled with macOS) stands in; Font.custom falls back to the system
 // font if it is ever missing.
+//
+// Colors follow the system appearance: black surface / white type in Dark
+// Mode, inverted (white surface / black type) in Light Mode. The active
+// channel badge uses `foreground` as fill and `background` as text, so it
+// inverts automatically too.
 private enum NTS {
-    static let background = Color.black
-    static let foreground = Color.white
-    static let dim = Color.white.opacity(0.55)
-    static let rule = Color.white.opacity(0.9)
+    static let background = adaptive(light: .white, dark: .black)
+    static let foreground = adaptive(light: .black, dark: .white)
+    static let dim = adaptive(
+        light: NSColor.black.withAlphaComponent(0.55),
+        dark: NSColor.white.withAlphaComponent(0.55)
+    )
+    static let rule = adaptive(
+        light: NSColor.black.withAlphaComponent(0.9),
+        dark: NSColor.white.withAlphaComponent(0.9)
+    )
     static let live = Color(red: 0.93, green: 0.11, blue: 0.14)
+
+    private static func adaptive(light: NSColor, dark: NSColor) -> Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .vibrantDark]) != nil ? dark : light
+        })
+    }
 
     static func font(_ size: CGFloat) -> Font {
         .custom("HelveticaNeue-CondensedBold", size: size)
@@ -73,12 +91,29 @@ struct NTSWidgetEntryView: View {
 
             Spacer(minLength: 0)
         }
-        .environment(\.colorScheme, .dark)
-        .containerBackground(for: .widget) { NTS.background }
+        .containerBackground(for: .widget) { WidgetBackground() }
     }
 
     private var status: WidgetStatus {
         WidgetStatus(state: entry.state)
+    }
+}
+
+/// Dark Mode keeps the solid black NTS surface. Light Mode uses a frosted,
+/// partly see-through white so the desktop shows through softly; the white
+/// wash on top keeps the black type legible over busy wallpapers.
+/// (`NTS.background` itself stays opaque — it is also the active badge's text color.)
+private struct WidgetBackground: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        if colorScheme == .dark {
+            NTS.background
+        } else {
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .overlay(Color.white.opacity(0.45))
+        }
     }
 }
 
@@ -95,9 +130,19 @@ private struct Header: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 6) {
-            Text("NTS RADIO")
-                .font(NTS.font(17))
+            // Opens nts.live (e.g. to check what track is playing).
+            Link(destination: AppConstants.ntsWebsiteURL) {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text("NTS RADIO")
+                        .font(NTS.font(17))
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 10, weight: .black))
+                }
                 .foregroundStyle(NTS.foreground)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open nts.live")
 
             Spacer(minLength: 0)
 

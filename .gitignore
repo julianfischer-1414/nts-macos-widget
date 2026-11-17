@@ -16,3 +16,6 @@ dist/
 .env
 .env.*
 
+
+# Test coverage output
+*.profraw

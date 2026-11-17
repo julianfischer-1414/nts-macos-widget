@@ -155,6 +155,52 @@ final class RadioPlayerServiceTests: XCTestCase {
         XCTAssertEqual(reloader.reloadCallCount, 2)
     }
 
+    @MainActor
+    func testTitlesRefreshWhileStillPlaying() async throws {
+        let engine = MockRadioPlaybackEngine()
+        let fetcher = SequencedMetadataFetcher([
+            NTSNowPlaying(nts1Title: "Morning Show", nts2Title: "Other"),
+            NTSNowPlaying(nts1Title: "Next Show", nts2Title: "Other"),
+        ])
+        let sut = RadioPlayerService(
+            engine: engine,
+            stateStore: InMemorySharedPlayerStateStore(initialState: .idle()),
+            widgetReloader: MockWidgetReloader(),
+            metadataService: fetcher,
+            metadataRefreshInterval: .milliseconds(20),
+            initialState: .idle()
+        )
+
+        _ = try await sut.play(station: .nts1)
+        await simulateAndDrain(engine, .playing)
+
+        // The show changes while the stream keeps playing; the widget must
+        // follow without any new engine transition.
+        try await waitUntil { sut.currentState().nts1NowTitle == "Next Show" }
+        XCTAssertTrue(sut.currentState().isPlaying)
+
+        // Pausing stops polling.
+        _ = try await sut.togglePlayback()
+        let callsAtPause = fetcher.callCount
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(fetcher.callCount, callsAtPause)
+    }
+
+    @MainActor
+    private func waitUntil(
+        timeout: Duration = .seconds(2),
+        _ condition: () -> Bool
+    ) async throws {
+        let deadline = ContinuousClock.now + timeout
+        while !condition() {
+            guard ContinuousClock.now < deadline else {
+                XCTFail("condition not met within \(timeout)")
+                return
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
     /// `RadioPlayerService` forwards engine callbacks through
     /// `Task { @MainActor in … }`, so a simulated engine state only lands after
     /// the current actor turn yields. Drive it and then drain the actor.

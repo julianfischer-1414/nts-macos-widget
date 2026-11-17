@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A native macOS app (`NTSWidgetHost`) plus WidgetKit extension (`NTSWidgetExtension`) that plays the NTS 1 / NTS 2 live streams from a `systemMedium` desktop widget. macOS 14+. Unofficial fan project.
 
-**Scope is deliberately locked (v1):** one widget family (`systemMedium`), two stations, three controls (`1`, `2`, `Play/Pause`), one status line. No artwork, no search, no menu bar UI, no extra widget sizes. Don't expand this without being asked.
+**Scope is deliberately locked (v1):** one widget family (`systemMedium`), two stations, three controls (`1`, `2`, `Play/Pause`), one status line. No artwork, no search, no menu bar UI, no extra widget sizes. The header (`NTS RADIO ↗`) is a plain https `Link` to nts.live, added on request so users can check track IDs on the site. Don't expand this without being asked.
 
 ## Commands
 

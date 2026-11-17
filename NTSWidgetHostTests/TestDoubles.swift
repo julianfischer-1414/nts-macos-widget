@@ -108,3 +108,26 @@ final class MockPlaybackController: PlaybackControlling {
         state
     }
 }
+
+/// Returns the queued responses in order, repeating the last one once the
+/// queue is exhausted.
+final class SequencedMetadataFetcher: NTSLiveMetadataFetching, @unchecked Sendable {
+    private let lock = NSLock()
+    private var responses: [NTSNowPlaying]
+    private var calls = 0
+
+    init(_ responses: [NTSNowPlaying]) {
+        self.responses = responses
+    }
+
+    var callCount: Int {
+        lock.withLock { calls }
+    }
+
+    func fetchNowPlaying() async throws -> NTSNowPlaying {
+        lock.withLock {
+            calls += 1
+            return responses.count > 1 ? responses.removeFirst() : responses[0]
+        }
+    }
+}
