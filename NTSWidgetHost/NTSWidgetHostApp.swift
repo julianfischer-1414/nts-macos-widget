@@ -70,6 +70,9 @@ final class WidgetActionURLHandler: NSObject, NSApplicationDelegate {
         let service = RadioPlayerService.shared
 
         switch action {
+        case .openWebsite:
+            logger.log("widget link open website")
+            NSWorkspace.shared.open(AppConstants.ntsWebsiteURL)
         case .play(let station):
             logger.log("widget link play station=\(station.rawValue, privacy: .public)")
             Task { @MainActor in

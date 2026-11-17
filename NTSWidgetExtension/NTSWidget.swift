@@ -47,11 +47,17 @@ struct NTSWidgetProvider: TimelineProvider {
 // font if it is ever missing.
 //
 // Colors follow the system appearance: black surface / white type in Dark
-// Mode, inverted (white surface / black type) in Light Mode. The active
+// Mode, inverted (light gray surface / black type) in Light Mode. The active
 // channel badge uses `foreground` as fill and `background` as text, so it
 // inverts automatically too.
 private enum NTS {
-    static let background = adaptive(light: .white, dark: .black)
+    // Light Mode: a soft light gray rather than pure white, so the widget
+    // sits more quietly on the desktop (a translucent surface is not possible,
+    // see CLAUDE.md).
+    static let background = adaptive(
+        light: NSColor(calibratedWhite: 0.80, alpha: 1),
+        dark: .black
+    )
     static let foreground = adaptive(light: .black, dark: .white)
     static let dim = adaptive(
         light: NSColor.black.withAlphaComponent(0.55),
@@ -76,8 +82,11 @@ private enum NTS {
 
 struct NTSWidgetEntryView: View {
     let entry: NTSWidgetEntry
-
     var body: some View {
+        content.containerBackground(for: .widget) { NTS.background }
+    }
+
+    private var content: some View {
         VStack(spacing: 0) {
             Header(status: status)
                 .padding(.horizontal, 14)
@@ -91,29 +100,10 @@ struct NTSWidgetEntryView: View {
 
             Spacer(minLength: 0)
         }
-        .containerBackground(for: .widget) { WidgetBackground() }
     }
 
     private var status: WidgetStatus {
         WidgetStatus(state: entry.state)
-    }
-}
-
-/// Dark Mode keeps the solid black NTS surface. Light Mode uses a frosted,
-/// partly see-through white so the desktop shows through softly; the white
-/// wash on top keeps the black type legible over busy wallpapers.
-/// (`NTS.background` itself stays opaque — it is also the active badge's text color.)
-private struct WidgetBackground: View {
-    @Environment(\.colorScheme) private var colorScheme
-
-    var body: some View {
-        if colorScheme == .dark {
-            NTS.background
-        } else {
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .overlay(Color.white.opacity(0.45))
-        }
     }
 }
 
@@ -131,7 +121,7 @@ private struct Header: View {
     var body: some View {
         HStack(alignment: .center, spacing: 6) {
             // Opens nts.live (e.g. to check what track is playing).
-            Link(destination: AppConstants.ntsWebsiteURL) {
+            Link(destination: WidgetAction.openWebsite.url) {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     Text("NTS RADIO")
                         .font(NTS.font(17))

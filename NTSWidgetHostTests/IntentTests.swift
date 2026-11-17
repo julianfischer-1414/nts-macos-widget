@@ -72,6 +72,7 @@ final class WidgetActionTests: XCTestCase {
 
     func testToggleActionRoundTrips() {
         XCTAssertEqual(WidgetAction(url: WidgetAction.toggle.url), .toggle)
+        XCTAssertEqual(WidgetAction(url: WidgetAction.openWebsite.url), .openWebsite)
     }
 
     /// The scheme is declared in NTSWidgetHost/Info.plist; if these drift, taps

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A native macOS app (`NTSWidgetHost`) plus WidgetKit extension (`NTSWidgetExtension`) that plays the NTS 1 / NTS 2 live streams from a `systemMedium` desktop widget. macOS 14+. Unofficial fan project.
 
-**Scope is deliberately locked (v1):** one widget family (`systemMedium`), two stations, three controls (`1`, `2`, `Play/Pause`), one status line. No artwork, no search, no menu bar UI, no extra widget sizes. The header (`NTS RADIO ↗`) is a plain https `Link` to nts.live, added on request so users can check track IDs on the site. Don't expand this without being asked.
+**Scope is deliberately locked (v1):** one widget family (`systemMedium`), two stations, three controls (`1`, `2`, `Play/Pause`), one status line. No artwork, no search, no menu bar UI, no extra widget sizes. The header (`NTS RADIO ↗`) opens nts.live, added on request so users can check track IDs on the site. It is `WidgetAction.openWebsite` (`ntsradio://website`), opened by the host via `NSWorkspace` — macOS delivers every widget `Link`, https included, to the containing app, so a plain https `Link` silently does nothing. Don't expand this without being asked.
 
 ## Commands
 
@@ -114,7 +114,7 @@ The widget's visual layer derives a `WidgetStatus` (`idle`, `playing`, `paused`,
 
 The status line's symbol is aligned with `VerticalAlignment.firstLineCenter` (in `Shared/FirstLineCenterAlignment.swift`), which puts it on the **first** line's cap-height midpoint. `.firstTextBaseline` leaves a small glyph sitting on the baseline; `.center` drifts downward as soon as the title wraps to two lines. `FirstLineCenterAlignmentTests` asserts the symbol position is independent of line count and renders PNGs (path printed as `ALIGNMENT_RENDER:`) so the layout can be eyeballed.
 
-`.containerBackgroundRemovable(false)` and `.contentMarginsDisabled()` are on the widget configuration to stop the desktop/vibrant rendering path from replacing the custom gradient background and drifting the margins. The control row uses a weighted `GeometryReader` (`1 : 1 : 1.25`) rather than a flexible `HStack`, because the flexible layout let the play button expand and collapse the station buttons at runtime. Dark-mode inactive station fills/strokes are intentionally higher-contrast than they look "correct" in previews — vibrancy washes them out on the real desktop.
+`.containerBackgroundRemovable(false)` and `.contentMarginsDisabled()` are on the widget configuration to stop the desktop/vibrant rendering path from replacing the custom gradient background and drifting the margins. The control row uses a weighted `GeometryReader` (`1 : 1 : 1.25`) rather than a flexible `HStack`, because the flexible layout let the play button expand and collapse the station buttons at runtime. Light Mode is a solid light-gray surface on purpose: a translucent/glass look like Apple's own widgets is not reachable for a third-party widget on macOS 26 — a `Material`, a white with alpha, `Color.clear`, and `.containerBackground(.fill.tertiary, …)` (with the background removable) all rendered as flat opaque white on the real desktop, and `widgetTexture(.glass)` is visionOS-only. Dark-mode inactive station fills/strokes are intentionally higher-contrast than they look "correct" in previews — vibrancy washes them out on the real desktop.
 
 ## Identifiers
 

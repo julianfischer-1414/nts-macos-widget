@@ -19,13 +19,19 @@ import Foundation
 ///
 /// Widget `Link` destinations are opened through LaunchServices instead, which
 /// needs no code identity and no entitlement, so it keeps working indefinitely.
+///
+/// The nts.live link goes through here too (`openWebsite`): macOS delivers a
+/// widget `Link` to the widget's containing app, even for an https URL, so a
+/// plain `Link(destination: https://…)` never reaches the browser.
 enum WidgetAction: Equatable {
     case play(Station)
     case toggle
+    case openWebsite
 
     private enum Host: String {
         case play
         case toggle
+        case website
     }
 
     var url: URL {
@@ -38,6 +44,8 @@ enum WidgetAction: Equatable {
             components.queryItems = [URLQueryItem(name: "station", value: station.rawValue)]
         case .toggle:
             components.host = Host.toggle.rawValue
+        case .openWebsite:
+            components.host = Host.website.rawValue
         }
 
         guard let url = components.url else {
@@ -57,6 +65,8 @@ enum WidgetAction: Equatable {
         switch host {
         case .toggle:
             self = .toggle
+        case .website:
+            self = .openWebsite
         case .play:
             let raw = URLComponents(url: url, resolvingAgainstBaseURL: false)?
                 .queryItems?
