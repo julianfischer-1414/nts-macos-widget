@@ -1,19 +1,19 @@
 # NTS macOS Widget
-<img width="365" height="184" alt="Screenshot 2026-04-28 at 09 38 19" src="https://github.com/user-attachments/assets/e6057e4b-520e-4412-ae25-b2782040d978" />
-
 
 A simple macOS desktop widget for listening to NTS Radio.
 
-This project gives you quick access to **NTS 1**, **NTS 2**, and **play/pause** directly from your Mac desktop, without needing to keep a full app window open.
+This project gives you quick access to **NTS 1**, **NTS 2** and NTS's **Infinite Mixtapes** directly from your Mac desktop, without needing to keep a full app window open.
+
+Based on [jigjigjig/nts-macos-widget](https://github.com/jigjigjig/nts-macos-widget) (MIT).
 
 ## Download (no Xcode needed)
 
-Grab the latest build from **[Releases](https://github.com/jigjigjig/nts-macos-widget/releases)**.
+Grab the latest build from **[Releases](https://github.com/julianfischer-1414/nts-macos-widget/releases)**.
 
 1. Download `NTS-macOS-Widget-*.zip` and unzip it
 2. Drag **NTS Radio** into your **Applications** folder
 3. Open it once (see Gatekeeper note below)
-4. Right-click the desktop → **Edit Widgets** → search for **NTS** → add it
+4. Right-click the desktop → **Edit Widgets** → search for **NTS** → add the medium **NTS Live** widget and/or the large **NTS Infinite Mixtapes** widget
 5. Leave **NTS Radio** running in the background while you use the widget (it has no Dock icon)
 
 ### If you installed 1.0.1, please update
@@ -36,15 +36,18 @@ Requires **macOS 14** or later.
 
 ## What It Does
 
-- Lets you start NTS 1 or NTS 2 from a macOS widget
-- Includes a play/pause control
+- Lets you start NTS 1 or NTS 2 from a macOS widget, with the current show title
+- Plays the Poolside and Slow Focus Infinite Mixtapes from the same widget
+- A large second widget lists all 16 Infinite Mixtapes
+- Tap the playing row again to pause; tap **NTS RADIO ↗** to open nts.live
+- Follows the system's light/dark appearance
 - Keeps the interface small, focused, and easy to use
 - Runs as a lightweight helper app in the background
 - Is designed for people who want quick access to NTS while working
 
 ## What It Looks Like
 
-The widget is intentionally minimal: two station buttons and one playback button. No clutter, no search, no menus, and no extra screens.
+The widget is intentionally minimal, styled after the nts.live live bar: one row per station or mixtape, no artwork, no search, no menus and no extra screens.
 
 ## Who It Is For
 
@@ -54,7 +57,7 @@ It is especially useful if you keep widgets visible while working and want music
 
 ## Current Status
 
-This is an early public version of the project. It is focused on the core experience: choosing between NTS 1 and NTS 2 and controlling playback from the widget.
+This is an early public version of the project. It is focused on the core experience: choosing between NTS 1, NTS 2 and the Infinite Mixtapes and controlling playback from the widget.
 
 ## About NTS
 
@@ -70,7 +73,7 @@ It currently includes:
 
 - A macOS host app
 - A desktop widget
-- Playback controls for NTS 1 and NTS 2
+- Playback controls for NTS 1, NTS 2 and the Infinite Mixtapes
 - Shared playback state between the app and widget
 
 ### Package a GitHub Release
@@ -78,9 +81,9 @@ It currently includes:
 With Xcode installed:
 
 ```bash
-./scripts/package-release.sh 1.0.2
-# creates dist/NTS-macOS-Widget-1.0.2.zip
+./scripts/package-release.sh 1.0.3
+# creates dist/NTS-macOS-Widget-1.0.3.zip
 
-./scripts/package-release.sh 1.0.2 --publish
+./scripts/package-release.sh 1.0.3 --publish
 # builds the zip and creates/uploads a GitHub release (needs `gh` auth)
 ```
